@@ -1,7 +1,7 @@
+import datetime as dt
+
 from rest_framework import serializers
 from rest_framework.validators import UniqueTogetherValidator
-
-import datetime as dt
 
 from .models import CHOICES, Achievement, AchievementCat, Cat, User
 
@@ -27,25 +27,58 @@ class CatSerializer(serializers.ModelSerializer):
     achievements = AchievementSerializer(many=True, required=False)
     color = serializers.ChoiceField(choices=CHOICES)
     age = serializers.SerializerMethodField()
-    
+    owner = serializers.HiddenField(default=serializers.CurrentUserDefault())
+
     class Meta:
         model = Cat
-        fields = ('id', 'name', 'color', 'birth_year', 'achievements', 'owner',
-                  'age')
+        fields = (
+            'id',
+            'name',
+            'color',
+            'birth_year',
+            'achievements',
+            'owner',
+            'age',
+        )
+        read_only_fields = ('owner',)
+        validators = [
+            UniqueTogetherValidator(
+                queryset=Cat.objects.all(), fields=('name', 'owner')
+            )
+        ]
 
     def get_age(self, obj):
         return dt.datetime.now().year - obj.birth_year
 
+    # def perform_create(self, serializer):
+    #     serializer.save(owner=self.request.user)
+
     def create(self, validated_data):
+        request = self.context.get('request')
         if 'achievements' not in self.initial_data:
-            cat = Cat.objects.create(**validated_data)
+            cat = Cat.objects.create(**validated_data, owner=request.user)
             return cat
         else:
             achievements = validated_data.pop('achievements')
-            cat = Cat.objects.create(**validated_data)
+            cat = Cat.objects.create(**validated_data, owner=request.user)
             for achievement in achievements:
-                current_achievement, status = Achievement.objects.get_or_create(
-                    **achievement)
+                current_achievement, status = (
+                    Achievement.objects.get_or_create(**achievement)
+                )
                 AchievementCat.objects.create(
-                    achievement=current_achievement, cat=cat)
+                    achievement=current_achievement, cat=cat
+                )
             return cat
+
+    def validate_birth_year(self, value):
+        year = dt.date.today().year
+        if not (year - 40 < value <= year):
+            raise serializers.ValidationError('Проверьте год рождения!')
+        return value
+
+    def validate(self, data):
+        if data['color'] == data['name']:
+            raise serializers.ValidationError(
+                'Имя не может совпадать с цветом!'
+            )
+        return data
